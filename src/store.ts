@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { api, wireListeners } from "./api";
+import { bustAvatarFp } from "./components/ui";
 import type { AppConfig, Conversation, Message, PeerView, Profile } from "./types";
 
 interface Toast {
@@ -211,6 +212,7 @@ export const useApp = create<AppState>()((set, get) => ({
         get().toast(a.message ?? `安全提醒：${a.code}`, "err");
       },
       "call-signal": () => {},
+      "avatar-changed": ({ fp }) => bustAvatarFp(fp),
     });
   },
 

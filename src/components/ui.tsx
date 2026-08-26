@@ -9,6 +9,12 @@ export function bustAvatarCache() {
   avatarCache.clear();
 }
 
+export function bustAvatarFp(fp: string) {
+  for (const key of avatarCache.keys()) {
+    if (key.startsWith(fp + ":")) avatarCache.delete(key);
+  }
+}
+
 export function Avatar({
   fp,
   nick,

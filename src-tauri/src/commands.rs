@@ -141,7 +141,7 @@ pub fn forget_peer(state: State<'_, SharedCore>, fp: String) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn send_text(
+pub async fn send_text(
     state: State<'_, SharedCore>,
     fp: String,
     body: String,
@@ -153,7 +153,7 @@ pub fn send_text(
     if body_trimmed.len() > 64_000 {
         return Err("消息过长".into());
     }
-    let c = core(&state);
+    let c = state.inner().clone();
     let fpb = core::fp_bytes(&fp).ok_or("bad fingerprint")?;
     let mid = crypto::new_id();
     let ts = crypto::now_ms();
@@ -171,14 +171,22 @@ pub fn send_text(
     };
     c.db.insert_message(&row)?;
 
-    let delivered = core::get_session(c, &fpb)
-        .filter(|s| s.is_alive())
-        .map(|s| {
+    let delivered = match core::ensure_session(&c, &fpb).await {
+        Ok(sess) if sess.is_alive() => {
             let payload = json!({"mid": mid, "kind": "text", "body": body_trimmed, "ts": ts});
-            s.send(crate::transport::F_MSG, serde_json::to_vec(&payload).unwrap_or_default());
+            sess.send(crate::transport::F_MSG, serde_json::to_vec(&payload).unwrap_or_default());
+            tracing::info!("send_text: delivered via session fp={}", fp);
             true
-        })
-        .unwrap_or(false);
+        }
+        Ok(_) => {
+            tracing::warn!("send_text: session dead after ensure_session fp={}", fp);
+            false
+        }
+        Err(e) => {
+            tracing::warn!("send_text: ensure_session failed fp={}: {}", fp, e);
+            false
+        }
+    };
 
     if delivered {
         let _ = c.db.update_msg_state(&mid, "sent");
@@ -187,7 +195,7 @@ pub fn send_text(
         let _ = c.db.enqueue_outbox(&mid, &fp);
     }
 
-    let mut view = core::build_msg_view(c, row);
+    let mut view = core::build_msg_view(&c, row);
     view["state"] = json!(if delivered { "sent" } else { "pending" });
     Ok(view)
 }

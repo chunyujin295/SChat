@@ -50,6 +50,7 @@ export interface Events {
   "transfer-done": { fid: string; mid: string; ok: boolean };
   alert: { code: string; message?: string; nick?: string; knownFp?: string; newFp?: string };
   "call-signal": { fp: string; payload: string };
+  "avatar-changed": { fp: string };
 }
 
 export function wireListeners(handlers: {

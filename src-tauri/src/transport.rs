@@ -111,11 +111,30 @@ pub async fn dial(
     port: u16,
     expect: [u8; 32],
 ) -> Result<Arc<Session>, String> {
-    let stream = tokio::time::timeout(Duration::from_secs(4), TcpStream::connect((ip, port)))
+    tracing::info!("dial: connecting to {}:{}", ip, port);
+    let stream = match tokio::time::timeout(Duration::from_secs(4), TcpStream::connect((ip, port)))
         .await
-        .map_err(|_| "连接超时".to_string())?
-        .map_err(|e| format!("连接失败: {e}"))?;
-    run_connection(core.clone(), stream, true, Some(expect)).await
+    {
+        Ok(Ok(s)) => s,
+        Ok(Err(e)) => {
+            tracing::warn!("dial: connect error {}:{}: {}", ip, port, e);
+            return Err(format!("连接失败: {e}"));
+        }
+        Err(_) => {
+            tracing::warn!("dial: connect timeout {}:{}", ip, port);
+            return Err("连接超时".to_string());
+        }
+    };
+    match run_connection(core.clone(), stream, true, Some(expect)).await {
+        Ok(s) => {
+            tracing::info!("dial: session established to {}:{}", ip, port);
+            Ok(s)
+        }
+        Err(e) => {
+            tracing::warn!("dial: handshake failed {}:{}: {}", ip, port, e);
+            Err(e)
+        }
+    }
 }
 
 async fn run_connection(
@@ -146,6 +165,7 @@ async fn handshake_client(
     stream: &mut TcpStream,
     expect: Option<[u8; 32]>,
 ) -> Result<HandshakeOut, String> {
+    tracing::info!("handshake_client: sending client hello");
     let mut eph_seed = [0u8; 32];
     OsRng.fill_bytes(&mut eph_seed);
     let eph = XSec::from(eph_seed);
@@ -197,6 +217,7 @@ async fn handshake_server(
     core: &AppCore,
     stream: &mut TcpStream,
 ) -> Result<HandshakeOut, String> {
+    tracing::info!("handshake_server: reading client hello");
     let craw = hs_read(stream).await?;
     let hc: HClient = serde_json::from_slice(&craw).map_err(|e| e.to_string())?;
     if hc.v != 1 {
@@ -256,6 +277,14 @@ async fn start_session(
     transcript: [u8; 32],
     expect_sigc: Option<[u8; 32]>,
 ) -> Result<Arc<Session>, String> {
+    if let Some(old) = core::get_session(&core, &peer_fp) {
+        if old.is_alive() {
+            tracing::info!("start_session: existing alive session for fp={}, dropping new connection", crypto::hex(&peer_fp));
+            drop(stream);
+            return Ok(old);
+        }
+    }
+
     let (tx, rx) = mpsc::unbounded_channel::<(u8, Vec<u8>)>();
     let sess = Arc::new(Session::new(peer_fp, tx.clone()));
     let (rd, wr) = stream.into_split();
@@ -276,7 +305,18 @@ async fn start_session(
 
     let fp_hex = crypto::hex(&peer_fp);
     let _ = core.db.ensure_peer(&fp_hex);
-    core::register_session(&core, sess.clone());
+    let existing = core::register_session(&core, sess.clone());
+
+    if let Some(_old) = existing {
+        tracing::info!("start_session: race lost for fp={}, aborting new tasks", fp_hex);
+        w.abort();
+        r.abort();
+        return Ok(_old);
+    }
+
+    let sigc_payload = crypto::b64(&core.identity.sig.sign(&transcript).to_bytes());
+    sess.send(F_SIGC, sigc_payload.into_bytes());
+
     let verified = core.db.peer_confirmed(&fp_hex).unwrap_or(false);
     core.emit(
         "session",
@@ -286,6 +326,10 @@ async fn start_session(
         let c = core.clone();
         let f = fp_hex.clone();
         tokio::spawn(async move { core::flush_outbox(&c, &f) });
+    }
+    if crate::core::avatar_file(&core.dir, &fp_hex).is_none() {
+        core.ava_pending.lock().unwrap().remove(&fp_hex);
+        crate::discovery::request_avatar(&core, &peer_fp);
     }
     Ok(sess)
 }
@@ -297,7 +341,6 @@ async fn writer_task(
 ) {
     let mut seq: u64 = 0;
     while let Some((t, pl)) = rx.recv().await {
-        seq += 1;
         let ct = crypto::seal(&k.send_key, &k.send_prefix, t, seq, &pl);
         let total = (9 + ct.len()) as u32;
         let mut buf = Vec::with_capacity(4 + total as usize);
@@ -314,6 +357,7 @@ async fn writer_task(
         if t == F_BYE {
             break;
         }
+        seq += 1;
     }
     let _ = wr.shutdown().await;
 }
@@ -332,34 +376,45 @@ async fn reader_task(
     let fp_hex = crypto::hex(&sess.fp);
     let mut next: u64 = 0;
     let mut sigc_pending = expect_sigc;
+    tracing::info!("reader_task: started for fp={}", fp_hex);
     loop {
         let mut lb = [0u8; 4];
         if rd.read_exact(&mut lb).await.is_err() {
+            tracing::info!("reader_task: read length failed for fp={}", fp_hex);
             break;
         }
         let total = u32::from_be_bytes(lb) as usize;
         if !(9..=crypto::MAX_FRAME_BODY).contains(&total) {
+            tracing::warn!("reader_task: bad frame size={} fp={}", total, fp_hex);
             break;
         }
         let mut body = vec![0u8; total];
         if rd.read_exact(&mut body).await.is_err() {
+            tracing::info!("reader_task: read body failed for fp={}", fp_hex);
             break;
         }
         let t = body[0];
         let seq = u64::from_be_bytes(body[1..9].try_into().unwrap());
         if seq != next {
+            tracing::warn!("reader_task: seq mismatch got={} expected={} fp={}", seq, next, fp_hex);
             break;
         }
         next += 1;
         let pl = match crypto::open(&k.recv_key, &k.recv_prefix, t, seq, &body[9..]) {
             Ok(p) => p,
-            Err(_) => break,
+            Err(e) => {
+                tracing::warn!("reader_task: decrypt failed type={} seq={} fp={}: {}", t, seq, fp_hex, e);
+                break;
+            }
         };
         sess.last_rx_ms
             .store(crypto::now_ms(), Ordering::Relaxed);
 
         match t {
-            F_BYE => break,
+            F_BYE => {
+                tracing::info!("reader_task: received F_BYE fp={}", fp_hex);
+                break;
+            }
             F_SIGC => {
                 if let Some(tr) = sigc_pending.take() {
                     let ok = std::str::from_utf8(&pl)
@@ -369,8 +424,10 @@ async fn reader_task(
                         .map(|s| peer_vk.verify(&tr, &Signature::from_bytes(&s)).is_ok())
                         .unwrap_or(false);
                     if !ok {
+                        tracing::warn!("reader_task: F_SIGC verification failed fp={}", fp_hex);
                         break;
                     }
+                    tracing::info!("reader_task: F_SIGC verified fp={}", fp_hex);
                 }
             }
             F_PING => {
@@ -398,9 +455,11 @@ async fn reader_task(
             _ => {}
         }
         if !sess.is_alive() {
+            tracing::info!("reader_task: session not alive, breaking fp={}", fp_hex);
             break;
         }
     }
+    tracing::info!("reader_task: exited loop for fp={}, calling unregister", fp_hex);
     sess.alive_flag_off();
     core::unregister_session(&core, &sess.fp, &sess);
     core.emit(
@@ -516,5 +575,9 @@ async fn save_avatar(core: &AppCore, fp_hex: &str, pl: &[u8]) {
         }
     }
     crate::discovery::avatar_fetch_done(core, fp_hex);
+    core.emit(
+        "avatar-changed",
+        &serde_json::json!({"fp": fp_hex}),
+    );
     core::emit_peers(core);
 }

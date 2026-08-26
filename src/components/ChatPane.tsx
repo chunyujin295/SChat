@@ -140,7 +140,7 @@ function Chat({ fp }: { fp: string }) {
 
       <MsgList msgs={msgs} fp={fp} nick={nick} />
 
-      <InputBar fp={fp} online={online} nick={nick} isTyping={!!isTyping} />
+      <InputBar fp={fp} online={online} nick={nick} isTyping={!!isTyping} confirmed={!!peer?.confirmed} />
     </div>
   );
 }
@@ -443,7 +443,7 @@ function AudioBubble({ m }: { m: Message }) {
   );
 }
 
-function InputBar({ fp, online, nick, isTyping }: { fp: string; online: boolean; nick: string; isTyping: boolean }) {
+function InputBar({ fp, online, nick, isTyping, confirmed }: { fp: string; online: boolean; nick: string; isTyping: boolean; confirmed: boolean }) {
   const toast = useApp((s) => s.toast);
   const [text, setText] = useState("");
   const [emojiOpen, setEmojiOpen] = useState(false);
@@ -458,9 +458,17 @@ function InputBar({ fp, online, nick, isTyping }: { fp: string; online: boolean;
   const doSendText = async () => {
     const body = text.trim();
     if (!body) return;
+    if (!confirmed) {
+      if (!window.confirm(`对方指纹尚未核对，确定要发送消息给 ${nick} 吗？`)) return;
+    }
     setText("");
     try {
-      await api.sendText(fp, body);
+      const msg = await api.sendText(fp, body);
+      const s = useApp.getState();
+      const list = s.messages[fp] ?? [];
+      if (!list.some((x) => x.mid === msg.mid)) {
+        useApp.setState({ messages: { ...s.messages, [fp]: [...list, msg] } });
+      }
     } catch (e) {
       toast(String(e), "err");
       setText(body);

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex as AsyncMutex;
 
 #[derive(Clone)]
 pub struct Session {
@@ -90,6 +91,7 @@ pub struct AppCore {
     pub transfers: crate::transfer::Transfers,
     pub tcp_port: AtomicU16,
     pub ava_pending: Mutex<HashSet<String>>,
+    pub dial_locks: Mutex<HashMap<[u8; 32], Arc<AsyncMutex<()>>>>,
     pub instance_id: String,
 }
 
@@ -202,11 +204,23 @@ pub fn self_avatar_file(core: &AppCore) -> Option<PathBuf> {
 }
 
 pub fn get_session(core: &AppCore, fp: &[u8; 32]) -> Option<Arc<Session>> {
-    core.sessions.lock().unwrap().get(fp).cloned()
+    let s = core.sessions.lock().unwrap().get(fp).cloned();
+    if s.is_some() {
+        tracing::debug!("get_session: fp={} found alive={}", crypto::hex(fp), s.as_ref().unwrap().is_alive());
+    }
+    s
 }
 
 pub fn register_session(core: &AppCore, sess: Arc<Session>) -> Option<Arc<Session>> {
     let mut map = core.sessions.lock().unwrap();
+    if let Some(old) = map.get(&sess.fp) {
+        if old.is_alive() {
+            tracing::info!("register_session: found alive old for fp={}, killing new", crypto::hex(&sess.fp));
+            sess.kill();
+            return Some(old.clone());
+        }
+    }
+    tracing::info!("register_session: inserting new session for fp={}", crypto::hex(&sess.fp));
     let old = map.insert(sess.fp, sess);
     if let Some(o) = &old {
         o.close();
@@ -217,11 +231,19 @@ pub fn register_session(core: &AppCore, sess: Arc<Session>) -> Option<Arc<Sessio
 pub fn unregister_session(core: &AppCore, fp: &[u8; 32], sess: &Arc<Session>) {
     let mut map = core.sessions.lock().unwrap();
     let remove = match map.get(fp) {
-        Some(cur) => Arc::ptr_eq(cur, sess),
-        None => false,
+        Some(cur) => {
+            let ptr_eq = Arc::ptr_eq(cur, sess);
+            tracing::info!("unregister_session: fp={} ptr_eq={} cur_alive={}", crypto::hex(fp), ptr_eq, cur.is_alive());
+            ptr_eq
+        }
+        None => {
+            tracing::warn!("unregister_session: fp={} not found in map", crypto::hex(fp));
+            false
+        }
     };
     if remove {
         map.remove(fp);
+        tracing::info!("unregister_session: fp={} removed", crypto::hex(fp));
     }
 }
 
@@ -257,6 +279,19 @@ pub async fn ensure_session(core: &SharedCore, fp: &[u8; 32]) -> Result<Arc<Sess
             return Ok(s);
         }
     }
+    let lock = {
+        let mut locks = core.dial_locks.lock().unwrap();
+        locks
+            .entry(*fp)
+            .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+            .clone()
+    };
+    let _guard = lock.lock().await;
+    if let Some(s) = get_session(core, fp) {
+        if s.is_alive() {
+            return Ok(s);
+        }
+    }
     let entry = {
         let map = core.peers.lock().unwrap();
         map.get(fp).cloned()
@@ -266,7 +301,11 @@ pub async fn ensure_session(core: &SharedCore, fp: &[u8; 32]) -> Result<Arc<Sess
         return Err("对方当前不在线".into());
     }
     let ip: Ipv4Addr = entry.ip.parse().map_err(|_| "bad ip".to_string())?;
-    crate::transport::dial(core, ip, entry.port, *fp).await
+    tracing::info!("ensure_session: dialing {} fp={}", ip, crypto::hex(fp));
+    match crate::transport::dial(core, ip, entry.port, *fp).await {
+        Ok(s) => Ok(s),
+        Err(e) => Err(e),
+    }
 }
 
 pub fn flush_outbox(core: &SharedCore, fp_hex: &str) {

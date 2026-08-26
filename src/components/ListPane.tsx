@@ -25,7 +25,7 @@ export default function ListPane() {
       <div className="px-4 pt-4 pb-2">
         <div className="flex items-center gap-3 mb-3">
           <div className="cursor-pointer" onClick={() => setShowSettings(true)}>
-            <Avatar fp="self" size={36} />
+            <Avatar fp="self" size={36} ver={profile?.avaVer} />
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-semibold truncate" style={{ color: "var(--txt)" }}>

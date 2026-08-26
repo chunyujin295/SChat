@@ -153,8 +153,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, _event| {
-                    toggle_main(app);
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        toggle_main(app);
+                    }
                 })
                 .build(),
         )
@@ -196,6 +198,7 @@ pub fn run() {
                 transfers: transfer::Transfers::new(),
                 tcp_port: Default::default(),
                 ava_pending: Default::default(),
+                dial_locks: Default::default(),
                 instance_id,
             });
             app.manage(core_app.clone());
