@@ -36,6 +36,7 @@ fn config_value(c: &AppCore) -> Value {
         "hotkey": g.hotkey,
         "closeToTray": g.close_to_tray,
         "onboarded": g.onboarded,
+        "dataDir": g.data_dir,
     })
 }
 
@@ -391,6 +392,13 @@ pub fn set_settings(app: AppHandle, state: State<'_, SharedCore>, patch: Value) 
         if let Some(b) = patch.get("closeToTray").and_then(|v| v.as_bool()) {
             g.close_to_tray = b;
         }
+        if let Some(d) = patch.get("dataDir").and_then(|v| v.as_str()) {
+            let p = std::path::PathBuf::from(d);
+            if !p.exists() {
+                return Err("目录不存在".into());
+            }
+            g.data_dir = Some(d.to_string());
+        }
         g.save(&c.dir)?;
     }
     Ok(config_value(c))
@@ -428,4 +436,9 @@ pub fn open_path(_app: AppHandle, path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
     app.exit(0);
+}
+
+#[tauri::command]
+pub fn get_data_dir(state: State<'_, SharedCore>) -> String {
+    core(&state).dir.to_string_lossy().to_string()
 }

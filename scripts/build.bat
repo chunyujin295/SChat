@@ -5,38 +5,35 @@ set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
 cd /d "%~dp0.."
 title SChat - Build
 
+where cargo >nul 2>nul || (echo [ERROR] cargo not found & pause & exit /b 1)
+where npm   >nul 2>nul || (echo [ERROR] npm not found   & pause & exit /b 1)
+
 REM --- Read version ---
 if not exist "scripts\version.txt" (echo [ERROR] scripts\version.txt not found & pause & exit /b 1)
 set /p VER=<"scripts\version.txt"
 set VER=%VER:v=%
 echo [SChat] Version: %VER%
 
-REM --- Sync version to package.json ---
-npm version %VER% --no-git-tag-version --allow-same-version >nul 2>nul
+REM --- Sync version ---
+node scripts\sync-version.cjs "%VER%"
+if errorlevel 1 (echo [ERROR] version sync failed & pause & exit /b 1)
 
-REM --- Sync version to tauri.conf.json ---
-powershell -NoProfile -Command ^
-  "$f='src-tauri/tauri.conf.json'; $c=Get-Content $f -Raw; $c=$c -replace '\"version\"\s*:\s*\"[^\"]*\"', '\"version\": \"%VER%\"'; Set-Content $f $c -NoNewline"
-
-REM --- Sync version to Cargo.toml (top-level only) ---
-powershell -NoProfile -Command ^
-  "$f='src-tauri/Cargo.toml'; $c=Get-Content $f -Raw; $c=$c -replace '(?m)^version\s*=\s*\"[^\"]*\"', 'version = \"%VER%\"'; Set-Content $f $c -NoNewline"
-
-echo [SChat] package.json / tauri.conf.json / Cargo.toml synced to %VER%
-echo.
-echo ============================================
-echo   SChat Build  v%VER%
-echo ============================================
-where cargo >nul 2>nul || (echo [ERROR] cargo not found & pause & exit /b 1)
-where npm   >nul 2>nul || (echo [ERROR] npm not found   & pause & exit /b 1)
+REM --- Install deps if needed ---
 if not exist node_modules (echo [SChat] Installing frontend deps... & call npm install)
 
+REM --- Clean ---
 echo [SChat] Cleaning old build artifacts...
 if exist "dist" rd /s /q "dist" >nul 2>nul
 if exist "src-tauri\target\release" rd /s /q "src-tauri\target\release" >nul 2>nul
 if exist "src-tauri\target\bundle" rd /s /q "src-tauri\target\bundle" >nul 2>nul
 echo [SChat] Clean done.
 
+echo.
+echo ============================================
+echo   SChat Build  v%VER%
+echo ============================================
+
+REM --- Build ---
 call npm run tauri build
 if errorlevel 1 (
     echo.

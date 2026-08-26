@@ -12,6 +12,8 @@ export default function ListPane() {
   const activeFp = useApp((s) => s.activeFp);
   const setActive = useApp((s) => s.setActive);
   const sessionOnline = useApp((s) => s.sessionOnline);
+  const profile = useApp((s) => s.profile);
+  const setShowSettings = useApp((s) => s.setSettingsOpen);
 
   const q = search.trim().toLowerCase();
 
@@ -21,6 +23,19 @@ export default function ListPane() {
       style={{ background: "var(--panel)", borderRight: "1px solid var(--line)" }}
     >
       <div className="px-4 pt-4 pb-2">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="cursor-pointer" onClick={() => setShowSettings(true)}>
+            <Avatar fp="self" size={36} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold truncate" style={{ color: "var(--txt)" }}>
+              {profile?.nickname ?? "…"}
+            </div>
+            <div className="text-xs truncate" style={{ color: "var(--sub)" }}>
+              {profile?.fpDisplay ?? ""}
+            </div>
+          </div>
+        </div>
         <div
           className="flex items-center gap-2 px-3 h-9 rounded-lg"
           style={{ background: "var(--panel2)", border: "1px solid var(--line)" }}

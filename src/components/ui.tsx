@@ -16,7 +16,7 @@ export function Avatar({
   size = 40,
 }: {
   fp: string;
-  nick: string;
+  nick?: string;
   ver?: number;
   size?: number;
 }) {

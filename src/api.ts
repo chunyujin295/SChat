@@ -37,6 +37,7 @@ export const api = {
   revealPath: (path: string) => invoke<void>("reveal_path", { path }),
   openPath: (path: string) => invoke<void>("open_path", { path }),
   quitApp: () => invoke<void>("quit_app"),
+  getDataDir: () => invoke<string>("get_data_dir"),
 };
 
 export interface Events {

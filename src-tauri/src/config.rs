@@ -19,6 +19,7 @@ pub struct Config {
     pub hotkey: String,
     pub close_to_tray: bool,
     pub onboarded: bool,
+    pub data_dir: Option<String>,
 }
 
 impl Default for Config {
@@ -36,6 +37,7 @@ impl Default for Config {
             hotkey: "Ctrl+Alt+S".into(),
             close_to_tray: true,
             onboarded: false,
+            data_dir: None,
         }
     }
 }

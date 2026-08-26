@@ -50,4 +50,5 @@ export interface AppConfig {
   hotkey: string;
   closeToTray: boolean;
   onboarded: boolean;
+  dataDir?: string | null;
 }

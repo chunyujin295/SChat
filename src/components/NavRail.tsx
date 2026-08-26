@@ -51,12 +51,6 @@ export default function NavRail() {
       className="w-16 h-full flex flex-col items-center py-4 gap-3 shrink-0"
       style={{ background: "var(--panel)", borderRight: "1px solid var(--line)" }}
     >
-      <div
-        className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-white mb-2 select-none"
-        style={{ background: "linear-gradient(135deg,#5f92ff,#3a58cd)", fontSize: 18 }}
-      >
-        S
-      </div>
       <Item active={tab === "chats"} badge={unreadTotal} onClick={() => setTab("chats")}>
         <MessageCircle size={22} />
       </Item>

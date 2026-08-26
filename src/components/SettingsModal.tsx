@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
-import { Keyboard, LogOut, Palette, ShieldCheck, UserRound, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { FolderOpen, Keyboard, LogOut, Palette, ShieldCheck, UserRound, X } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import { bustAvatarCache, Avatar } from "./ui";
 import { useApp } from "../store";
@@ -25,6 +26,7 @@ export default function SettingsModal() {
         <ProfileSection />
         <AppearanceSection />
         <HotkeySection />
+        <DataDirSection />
         <PrivacySection />
         <AboutSection />
       </div>
@@ -324,6 +326,76 @@ function HotkeySection() {
         <span className="text-xs" style={{ color: "var(--sub)" }}>
           用于显示 / 隐藏主窗口
         </span>
+      </div>
+    </Section>
+  );
+}
+
+function DataDirSection() {
+  const config = useApp((s) => s.config)!;
+  const patchLocal = useApp((s) => s.patchConfigLocal);
+  const toast = useApp((s) => s.toast);
+  const [dataDir, setDataDir] = useState(config.dataDir || "");
+  const [currentDir, setCurrentDir] = useState("");
+
+  useEffect(() => {
+    api.getDataDir().then(setCurrentDir).catch(() => {});
+  }, []);
+
+  const saveDataDir = async () => {
+    const dir = dataDir.trim();
+    try {
+      await api.setSettings({ dataDir: dir || null });
+      patchLocal({ dataDir: dir || null });
+      toast(dir ? "数据目录已修改，重启后生效" : "已恢复默认目录", "ok");
+    } catch (e) {
+      toast(String(e), "err");
+    }
+  };
+
+  const browseDir = async () => {
+    const selected = await open({ directory: true, multiple: false });
+    if (selected) {
+      setDataDir(selected);
+    }
+  };
+
+  return (
+    <Section icon={<FolderOpen size={16} />} title="数据目录">
+      <div className="text-sm space-y-3" style={{ color: "var(--sub)" }}>
+        <div>
+          当前数据目录：
+          <span className="font-mono text-xs ml-1 break-all" style={{ color: "var(--txt)" }}>
+            {currentDir || "加载中…"}
+          </span>
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={dataDir}
+            onChange={(e) => setDataDir(e.target.value)}
+            placeholder="留空使用默认目录"
+            className="flex-1 h-9 px-3 rounded-lg text-sm"
+            style={{ background: "var(--panel2)", border: "1px solid var(--line)", color: "var(--txt)" }}
+          />
+          <button
+            onClick={() => void browseDir()}
+            className="px-3 h-9 rounded-lg text-sm"
+            style={{ background: "var(--panel2)", color: "var(--txt)", border: "1px solid var(--line)" }}
+            title="选择目录"
+          >
+            <FolderOpen size={16} />
+          </button>
+          <button
+            onClick={() => void saveDataDir()}
+            className="px-4 h-9 rounded-lg text-sm text-white disabled:opacity-40"
+            style={{ background: "var(--acc)" }}
+          >
+            保存
+          </button>
+        </div>
+        <p className="text-xs leading-5">
+          修改后需重启应用生效。建议使用空闲磁盘空间较大的分区。
+        </p>
       </div>
     </Section>
   );

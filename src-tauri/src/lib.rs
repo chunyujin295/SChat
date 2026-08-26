@@ -44,8 +44,32 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
+
+    let icon_path = app
+        .path()
+        .resource_dir()
+        .ok()
+        .and_then(|p| {
+            let p = p.join("icons/icon.png");
+            if p.exists() { Some(p) } else { None }
+        })
+        .or_else(|| {
+            app.path()
+                .app_data_dir()
+                .ok()
+                .map(|p| p.join("icon.png"))
+        });
+
+    let icon = icon_path
+        .and_then(|p| {
+            let bytes = std::fs::read(p).ok()?;
+            tauri::image::Image::from_bytes(&bytes).ok()
+        })
+        .or_else(|| app.default_window_icon().cloned())
+        .expect("no icon available");
+
     TrayIconBuilder::with_id("main")
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(icon)
         .tooltip("SChat")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -136,8 +160,21 @@ pub fn run() {
         )
         .setup(|app| {
             let handle = app.handle().clone();
-            let dir = handle.path().app_data_dir()?;
-            std::fs::create_dir_all(&dir)?;
+            let default_dir = handle.path().app_data_dir()?;
+            std::fs::create_dir_all(&default_dir)?;
+
+            // Load config first to check for custom data_dir
+            let cfg_check = config::load_or_create(&default_dir)?;
+            let dir = if let Some(ref custom) = cfg_check.read().unwrap().data_dir {
+                let p = std::path::PathBuf::from(custom);
+                std::fs::create_dir_all(&p).unwrap_or_else(|_| {
+                    eprintln!("[SChat] Failed to create custom data_dir: {}", p.display());
+                });
+                p
+            } else {
+                default_dir
+            };
+
             std::fs::create_dir_all(dir.join("avatars"))?;
             std::fs::create_dir_all(dir.join("files"))?;
             std::fs::create_dir_all(dir.join("outgoing"))?;
@@ -216,6 +253,7 @@ pub fn run() {
             commands::reveal_path,
             commands::open_path,
             commands::quit_app,
+            commands::get_data_dir,
         ])
         .build(tauri::generate_context!())
         .expect("error while building schat")
