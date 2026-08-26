@@ -1,0 +1,14 @@
+{
+  "identifier": "default",
+  "description": "SChat main window capabilities",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-set-focus",
+    "core:window:allow-is-visible",
+    "core:window:allow-is-focused",
+    "dialog:default"
+  ]
+}

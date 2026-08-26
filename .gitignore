@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Frontend build
+dist/
+
+# Rust build artifacts
+src-tauri/target/
+src-tauri/gen/
+
+# Tauri intermediate
+src-tauri/wix/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Debug
+src-tauri/debug/
