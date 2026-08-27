@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { FolderOpen, Keyboard, LogOut, Palette, ShieldCheck, UserRound, X } from "lucide-react";
+import { Bell, FolderOpen, Keyboard, LogOut, Palette, ShieldCheck, UserRound, X } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import { bustAvatarCache, Avatar } from "./ui";
@@ -25,6 +25,7 @@ export default function SettingsModal() {
         <Header onClose={() => setOpen(false)} />
         <ProfileSection />
         <AppearanceSection />
+        <NotificationSection />
         <HotkeySection />
         <DataDirSection />
         <PrivacySection />
@@ -249,6 +250,54 @@ function AppearanceSection() {
           关闭窗口时最小化到托盘
         </label>
       </div>
+    </Section>
+  );
+}
+
+function NotificationSection() {
+  const config = useApp((s) => s.config)!;
+  const patchLocal = useApp((s) => s.patchConfigLocal);
+  const toast = useApp((s) => s.toast);
+  const setEnabled = async (enabled: boolean) => {
+    patchLocal({ notifications: enabled });
+    try {
+      await api.setSettings({ notifications: enabled });
+      toast(enabled ? "系统消息通知已开启" : "系统消息通知已关闭", "ok");
+    } catch (e) {
+      patchLocal({ notifications: !enabled });
+      toast(String(e), "err");
+    }
+  };
+  const testNotification = async () => {
+    try {
+      await api.testNotification();
+      toast("测试通知已发送", "ok");
+    } catch (e) {
+      toast(`系统通知发送失败：${String(e)}`, "err");
+    }
+  };
+  return (
+    <Section icon={<Bell size={16} />} title="消息通知">
+      <label className="flex items-center justify-between gap-4 text-sm cursor-pointer" style={{ color: "var(--txt)" }}>
+        <span>
+          <span className="block">系统消息通知</span>
+          <span className="block text-xs mt-1" style={{ color: "var(--sub)" }}>
+            窗口隐藏、最小化或不在前台时显示系统通知
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          checked={config.notifications}
+          onChange={(e) => void setEnabled(e.target.checked)}
+        />
+      </label>
+      <button
+        className="mt-3 px-3 h-8 rounded-lg text-xs"
+        style={{ background: "var(--panel2)", color: "var(--txt)", border: "1px solid var(--line)" }}
+        onClick={() => void testNotification()}
+      >
+        发送测试通知
+      </button>
     </Section>
   );
 }

@@ -486,6 +486,7 @@ async fn msg_in(core: &AppCore, fp_hex: &str, pl: &[u8]) {
     } else {
         mp.ts
     };
+    let notification_body = mp.body.clone();
     let row = crate::store::MsgRow {
         mid: mp.mid.clone(),
         fp: fp_hex.to_string(),
@@ -509,6 +510,7 @@ async fn msg_in(core: &AppCore, fp_hex: &str, pl: &[u8]) {
         )
     });
     core.emit("message-new", &core::build_msg_view(core, row));
+    core::notify_incoming(core, fp_hex, &notification_body);
 }
 
 fn tx_of(core: &AppCore, fp_hex: &str) -> Option<Arc<Session>> {

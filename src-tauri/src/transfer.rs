@@ -653,4 +653,5 @@ fn finalize_incoming(core: &AppCore, tx: &mpsc::UnboundedSender<(u8, Vec<u8>)>, 
     .ok();
     core.emit("transfer-done", &serde_json::json!({"fid": fid, "mid": meta.mid, "ok": true}));
     core.emit("message-new", &view);
+    core::notify_incoming(core, &fp_hex, &format!("[{}] {}", meta.kind, meta.name));
 }

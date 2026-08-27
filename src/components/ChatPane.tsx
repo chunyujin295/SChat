@@ -700,23 +700,57 @@ function transferOverlay(m: Message) {
 function ImageMsg({ m }: { m: Message }) {
   const setLightbox = useApp((s) => s.setLightbox);
   const toast = useApp((s) => s.toast);
-  if (!m.fpath || m.progress != null) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+    setUrl(null);
+    if (!m.fid && !m.fpath) return;
+    let active = true;
+    void api.getMediaUrl(m.fid ?? "", m.fpath).then(
+      (nextUrl) => {
+        if (active) setUrl(nextUrl);
+      },
+      () => {
+        if (active) setFailed(true);
+      }
+    );
+    return () => {
+      active = false;
+    };
+  }, [m.fid, m.fpath]);
+
+  if (failed) {
     return (
-      <div className="relative w-56 h-36 rounded-xl overflow-hidden" style={{ background: "var(--panel2)" }}>
-        {transferOverlay(m)}
+      <div className="relative w-56 h-36 rounded-xl overflow-hidden flex items-center justify-center text-xs" style={{ background: "var(--panel2)", color: "var(--sub)" }}>
+        图片加载失败
       </div>
     );
   }
-  const url = convertFileSrc(m.fpath);
+  // A file ID is sufficient for the media protocol; fpath is only a fallback
+  // for older messages that were stored before file IDs were available.
+  const fallbackUrl = m.fpath ? convertFileSrc(m.fpath) : null;
+  const imageUrl = url ?? fallbackUrl;
+  if (!imageUrl) {
+    return (
+      <div className="relative w-56 h-36 rounded-xl overflow-hidden flex items-center justify-center text-xs" style={{ background: "var(--panel2)", color: "var(--sub)" }}>
+        {transferOverlay(m)}
+        等待图片完成传输…
+      </div>
+    );
+  }
   return (
     <div className="relative group">
       <img
-        src={url}
+        src={imageUrl}
         className="rounded-xl max-w-64 max-h-64 object-cover cursor-zoom-in"
         draggable={false}
-        onClick={() => setLightbox(url)}
+        onClick={() => setLightbox(imageUrl)}
+        onError={() => setFailed(true)}
         alt=""
       />
+      {transferOverlay(m)}
       <button
         className="absolute bottom-2 right-2 px-2.5 h-7 rounded-lg items-center gap-1.5 text-xs text-white hidden group-hover:flex"
         style={{ background: "rgba(0,0,0,0.55)" }}
@@ -890,6 +924,8 @@ function InputBar({ fp, online, nick, isTyping, confirmed }: { fp: string; onlin
     } catch (e) {
       toast(String(e), "err");
       setText(body);
+    } finally {
+      window.requestAnimationFrame(() => taRef.current?.focus());
     }
   };
 

@@ -18,6 +18,7 @@ pub struct Config {
     pub theme: String,
     pub hotkey: String,
     pub close_to_tray: bool,
+    pub notifications: bool,
     pub onboarded: bool,
     pub data_dir: Option<String>,
 }
@@ -36,6 +37,7 @@ impl Default for Config {
             theme: "dark".into(),
             hotkey: "Ctrl+Alt+S".into(),
             close_to_tray: true,
+            notifications: true,
             onboarded: false,
             data_dir: None,
         }

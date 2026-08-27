@@ -5,11 +5,14 @@ use crate::store::Db;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_notification::NotificationExt;
 use tokio::sync::Mutex as AsyncMutex;
+use base64::Engine;
 
 #[derive(Clone)]
 pub struct Session {
@@ -90,12 +93,121 @@ pub struct AppCore {
     pub sessions: Sessions,
     pub transfers: crate::transfer::Transfers,
     pub tcp_port: AtomicU16,
+    pub media_port: AtomicU16,
     pub ava_pending: Mutex<HashSet<String>>,
     pub dial_locks: Mutex<HashMap<[u8; 32], Arc<AsyncMutex<()>>>>,
     pub instance_id: String,
 }
 
 pub type SharedCore = Arc<AppCore>;
+
+pub fn start_media_server(core: SharedCore) -> Result<(), String> {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
+    core.media_port.store(port, Ordering::Relaxed);
+
+    tauri::async_runtime::spawn(async move {
+        let Ok(listener) = tokio::net::TcpListener::from_std(listener) else {
+            return;
+        };
+        while let Ok((stream, _)) = listener.accept().await {
+            let core = core.clone();
+            tauri::async_runtime::spawn(async move {
+                serve_media(stream, core).await;
+            });
+        }
+    });
+    Ok(())
+}
+
+async fn serve_media(mut stream: tokio::net::TcpStream, core: SharedCore) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut request = [0u8; 2048];
+    let Ok(read) = stream.read(&mut request).await else {
+        return;
+    };
+    let path = std::str::from_utf8(&request[..read])
+        .ok()
+        .and_then(|r| r.split_whitespace().nth(1))
+        .unwrap_or("");
+    let encoded = path.strip_prefix("/media-path/").unwrap_or("");
+    let response = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .ok()
+        .and_then(|raw| String::from_utf8(raw).ok())
+        .and_then(|path| {
+            let requested = std::path::PathBuf::from(path);
+            let root = std::fs::canonicalize(core.files_dir()).ok()?;
+            let file = std::fs::canonicalize(requested).ok()?;
+            if !file.starts_with(root) {
+                return None;
+            }
+            let mime = match file.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase().as_str() {
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                "bmp" => "image/bmp",
+                _ => "application/octet-stream",
+            };
+            std::fs::read(file).ok().map(|bytes| (mime.to_string(), bytes))
+        });
+    let header = match &response {
+        Some((mime, bytes)) => format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            bytes.len()
+        ),
+        None => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into(),
+    };
+    let _ = stream.write_all(header.as_bytes()).await;
+    if let Some((_mime, bytes)) = response {
+        let _ = stream.write_all(&bytes).await;
+    }
+}
+
+pub fn show_notification(core: &AppCore, title: &str, body: &str) -> Result<(), String> {
+    core
+        .app
+        .notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
+}
+
+pub fn notify_incoming(core: &AppCore, fp_hex: &str, body: &str) {
+    let enabled = core.cfg.read().map(|c| c.notifications).unwrap_or(false);
+    if !enabled {
+        return;
+    }
+
+    let should_notify = core
+        .app
+        .get_webview_window("main")
+        .map(|window| {
+            !window.is_visible().unwrap_or(false)
+                || window.is_minimized().unwrap_or(false)
+                || !window.is_focused().unwrap_or(false)
+        })
+        .unwrap_or(true);
+    if !should_notify {
+        return;
+    }
+
+    let nick = core
+        .peers
+        .lock()
+        .ok()
+        .and_then(|peers| peers.values().find(|peer| peer.fp == fp_hex).map(|peer| peer.nick.clone()))
+        .unwrap_or_else(|| "SChat 新消息".to_string());
+    let body: String = body.chars().take(120).collect();
+    if let Err(error) = show_notification(core, &nick, &body) {
+        eprintln!("[SChat] Failed to show notification: {error}");
+    }
+}
 
 impl AppCore {
     pub fn files_dir(&self) -> PathBuf {
@@ -342,4 +454,3 @@ pub fn flush_outbox(core: &SharedCore, fp_hex: &str) {
         );
     }
 }
-

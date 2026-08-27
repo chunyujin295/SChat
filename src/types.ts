@@ -49,6 +49,7 @@ export interface AppConfig {
   theme: string;
   hotkey: string;
   closeToTray: boolean;
+  notifications: boolean;
   onboarded: boolean;
   dataDir?: string | null;
 }

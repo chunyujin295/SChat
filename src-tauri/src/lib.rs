@@ -17,6 +17,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use tauri_plugin_notification::NotificationExt;
 
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
@@ -147,6 +148,7 @@ pub fn run() {
         .try_init();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main(app);
         }))
@@ -202,11 +204,17 @@ pub fn run() {
                 sessions: Default::default(),
                 transfers: transfer::Transfers::new(),
                 tcp_port: Default::default(),
+                media_port: Default::default(),
                 ava_pending: Default::default(),
                 dial_locks: Default::default(),
                 instance_id,
             });
             app.manage(core_app.clone());
+            core::start_media_server(core_app.clone())?;
+
+            if core_app.cfg.read().map(|c| c.notifications).unwrap_or(false) {
+                let _ = handle.notification().request_permission();
+            }
 
             build_tray(&handle)?;
 
@@ -254,6 +262,8 @@ pub fn run() {
             commands::mark_read,
             commands::send_files,
             commands::send_media,
+            commands::test_notification,
+            commands::get_media_url,
             commands::cancel_transfer,
             commands::get_avatar,
             commands::set_profile,

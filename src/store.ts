@@ -41,6 +41,7 @@ interface AppState {
   patchConfigLocal: (c: Partial<AppConfig>) => void;
   refreshPeers: () => void;
   removeMessages: (fp: string, mids: string[]) => void;
+  markActiveRead: () => void;
 }
 
 let midIndex: Record<string, string> = {};
@@ -122,12 +123,13 @@ export const useApp = create<AppState>()((set, get) => ({
       },
       "message-new": (m) => {
         const s = get();
+        const viewing = m.dir === 1 && s.activeFp === m.fp && document.hasFocus();
         midIndex[m.mid] = m.fp;
         const list = s.messages[m.fp];
         if (list && !list.some((x) => x.mid === m.mid)) {
           set({ messages: { ...s.messages, [m.fp]: [...list, m] } });
         }
-        const convs = [...s.conversations];
+        const convs = s.conversations.map((conversation) => ({ ...conversation }));
         const c = convKey(convs, m.fp);
         const kindLabel: Record<string, string> = {
           image: "图片",
@@ -142,20 +144,13 @@ export const useApp = create<AppState>()((set, get) => ({
         if (c) {
           c.lastTs = m.ts;
           c.preview = preview.slice(0, 60);
-          if (m.dir === 1) c.unread += 1;
+          if (m.dir === 1) c.unread = viewing ? 0 : c.unread + 1;
           convs.sort((a, b) => b.lastTs - a.lastTs);
           set({ conversations: convs });
         }
-        if (m.dir === 1 && s.activeFp === m.fp && document.hasFocus()) {
-          api.markRead(m.fp);
-          unreadBackup[m.fp] = 0;
-          const cs = get().conversations;
-          const cc = convKey(cs, m.fp);
-          if (cc) cc.unread = 0;
-          set({ conversations: cs });
-        }
         if (m.dir === 1) {
-          unreadBackup[m.fp] = (unreadBackup[m.fp] ?? 0) + 1;
+          unreadBackup[m.fp] = viewing ? 0 : (unreadBackup[m.fp] ?? 0) + 1;
+          if (viewing) void api.markRead(m.fp);
         }
       },
       "message-state": ({ mid, state }) => {
@@ -235,14 +230,7 @@ export const useApp = create<AppState>()((set, get) => ({
         /* banner shows from peer.confirmed */
       }
     });
-    api.markRead(fp);
-    unreadBackup[fp] = 0;
-    const convs = get().conversations;
-    const c = convKey(convs, fp);
-    if (c) {
-      c.unread = 0;
-      set({ conversations: [...convs] });
-    }
+    get().markActiveRead();
   },
 
   setTab(tab) {
@@ -282,6 +270,19 @@ export const useApp = create<AppState>()((set, get) => ({
   },
 
   refreshPeers() {},
+
+  markActiveRead() {
+    const s = get();
+    const fp = s.activeFp;
+    if (!fp) return;
+    unreadBackup[fp] = 0;
+    set({
+      conversations: s.conversations.map((c) =>
+        c.fp === fp && c.unread !== 0 ? { ...c, unread: 0 } : c
+      ),
+    });
+    void api.markRead(fp);
+  },
 
   removeMessages(fp, mids) {
     const s = get();

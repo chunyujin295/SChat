@@ -26,6 +26,9 @@ export const api = {
     invoke<Array<Record<string, unknown>>>("send_files", { fp, paths }),
   sendMedia: (fp: string, bytes: Bytes, name: string, kind: string) =>
     invoke<Message>("send_media", { fp, bytes: Array.from(bytes), name, kind }),
+  testNotification: () => invoke<void>("test_notification"),
+  getMediaUrl: (fid: string, path?: string | null) =>
+    invoke<string>("get_media_url", { fid, path: path ?? null }),
   cancelTransfer: (fid: string) => invoke<void>("cancel_transfer", { fid }),
   getAvatar: (fp: string): Promise<string | null> =>
     invoke<string | null>("get_avatar", { fp }).catch(() => null),

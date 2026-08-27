@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use tauri::{AppHandle, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+use tauri_plugin_notification::NotificationExt;
 
 fn core<'a>(s: &'a State<'_, SharedCore>) -> &'a AppCore {
     s.inner().as_ref()
@@ -35,6 +36,7 @@ fn config_value(c: &AppCore) -> Value {
         "theme": g.theme,
         "hotkey": g.hotkey,
         "closeToTray": g.close_to_tray,
+        "notifications": g.notifications,
         "onboarded": g.onboarded,
         "dataDir": g.data_dir,
     })
@@ -311,6 +313,41 @@ pub async fn send_media(
 }
 
 #[tauri::command]
+pub fn test_notification(state: State<'_, SharedCore>) -> Result<(), String> {
+    core::show_notification(core(&state), "SChat", "这是一条系统通知测试消息")
+}
+
+#[tauri::command]
+pub fn get_media_url(
+    state: State<'_, SharedCore>,
+    fid: String,
+    path: Option<String>,
+) -> Result<String, String> {
+    let c = core(&state);
+    let path = path.or_else(|| {
+        c.db
+            .file_info(&fid)
+            .ok()
+            .flatten()
+            .map(|info| info.6)
+    }).ok_or_else(|| "图片文件不存在".to_string())?;
+    let root = std::fs::canonicalize(c.files_dir()).map_err(|e| e.to_string())?;
+    let file = std::fs::canonicalize(&path).map_err(|_| "图片文件不存在".to_string())?;
+    if !file.starts_with(root) || !file.is_file() {
+        return Err("图片文件路径无效".into());
+    }
+    let port = c.media_port.load(std::sync::atomic::Ordering::Relaxed);
+    if port == 0 {
+        return Err("图片服务尚未启动".into());
+    }
+    let encoded = base64::Engine::encode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        path.as_bytes(),
+    );
+    Ok(format!("http://127.0.0.1:{port}/media-path/{encoded}"))
+}
+
+#[tauri::command]
 pub fn cancel_transfer(state: State<'_, SharedCore>, fid: String) -> Result<(), String> {
     let c = core(&state);
     if let Some(mid) = c.transfers.cancel(&fid) {
@@ -448,6 +485,12 @@ pub fn set_settings(app: AppHandle, state: State<'_, SharedCore>, patch: Value) 
         }
         if let Some(b) = patch.get("closeToTray").and_then(|v| v.as_bool()) {
             g.close_to_tray = b;
+        }
+        if let Some(b) = patch.get("notifications").and_then(|v| v.as_bool()) {
+            g.notifications = b;
+            if b {
+                let _ = app.notification().request_permission();
+            }
         }
         if let Some(d) = patch.get("dataDir").and_then(|v| v.as_str()) {
             let p = std::path::PathBuf::from(d);

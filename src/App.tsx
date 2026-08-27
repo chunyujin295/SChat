@@ -56,6 +56,19 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  useEffect(() => {
+    const markRead = () => useApp.getState().markActiveRead();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") markRead();
+    };
+    window.addEventListener("focus", markRead);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", markRead);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
   if (!ready) {
     return (
       <div className="h-full flex items-center justify-center" style={{ background: "var(--bg)" }}>
