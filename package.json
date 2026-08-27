@@ -1,11 +1,7 @@
 {
   "name": "schat",
   "private": true,
-<<<<<<< HEAD
   "version": "0.2.1",
-=======
-  "version": "0.2.0",
->>>>>>> 087204a3107482fcf36c48123356f453aa202eea
   "type": "module",
   "scripts": {
     "dev": "vite",
