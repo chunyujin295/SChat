@@ -465,7 +465,7 @@ impl Db {
     pub fn file_info(&self, fid: &str) -> Result<Option<(String, String, i64, String, String, i32, String)>, String> {
         let raw = self.with(|c| {
             let mut st = c.prepare(
-                "SELECT name_enc,size,sha,mime,kind,path,dir FROM files WHERE fid=?1",
+                "SELECT name_enc,size,sha,mime,kind,dir,path FROM files WHERE fid=?1",
             )?;
             let mut rows = st.query(params![fid])?;
             if let Some(r) = rows.next()? {
