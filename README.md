@@ -222,7 +222,9 @@ scripts\build.bat
 
 ```
 SChat/
-├── docs/DESIGN.md              设计文档（协议/加密/UI/里程碑）
+├── docs/
+│   ├── DESIGN.md                设计文档（协议/加密/UI/里程碑）
+│   └── BUGFIX-file-image-preview.md  故障复盘（文件/图片无法预览）
 ├── scripts/
 │   ├── dev.bat                 开发调试脚本
 │   ├── build.bat               一键构建脚本
@@ -257,6 +259,12 @@ SChat/
 - [x] **M3** 加密会话 — TCP 握手/AEAD、文字消息、已读回执、离线补投
 - [x] **M4** 媒体传输 — 图片/文件/语音、分块流控、断点续传、SHA-256 校验
 - [ ] **M5** 实时音视频 — WebRTC 信令通道已预留（`call-signal` 事件）
+
+## 变更记录
+
+| 日期 | 版本 | 内容 |
+|------|------|------|
+| 2026-08-27 | 0.2.0 | 修复：发送的文件无法打开、发送的图片双方都看不到（`files` 表读取列顺序错位）。详见 [docs/BUGFIX-file-image-preview.md](docs/BUGFIX-file-image-preview.md) |
 
 ## License
 

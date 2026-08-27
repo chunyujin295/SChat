@@ -242,7 +242,8 @@ messages(
 )
 files(
   fid TEXT PRIMARY KEY, fp TEXT,
-  name_enc BLOB, size INT, sha256 TEXT, mime TEXT,
+  name_enc BLOB, size INT, sha TEXT, mime TEXT,
+  kind TEXT,                    -- text|image|file|audio|video
   path TEXT, dir INT, created_at INT
 )
 outbox(mid TEXT PRIMARY KEY, fp TEXT, queued_at INT, attempts INT)
@@ -253,6 +254,11 @@ trust(fp TEXT PRIMARY KEY, pinned_at INT)  -- TOFU 固定记录
 - 索引：`messages(fp, ts)`；会话列表按 `max(ts)` 聚合查询。
 - 「不留痕模式」（设置项，v1.1）：切换后新消息仅存内存 ring buffer，退出清空。
 - 清理：文件缓存按容量 LRU（默认 2GB 上限），设置页可视化清理。
+
+> ⚠️ **数据读取约定**：`files` 等表在 `store.rs` 中通过位置索引（`get::<T>(i)`）读取查询结果，
+> 因此 **SELECT 的列顺序必须与解构元组的顺序逐位一致**。表结构变更（如新增 `kind` 列）时，
+> 须同步检查所有读取点，否则会出现「列顺序错位 → 类型不匹配 → 关键字段（如 `path`）静默丢失」的运行时故障。
+> 参考 [BUGFIX-file-image-preview.md](BUGFIX-file-image-preview.md)。
 
 ---
 
