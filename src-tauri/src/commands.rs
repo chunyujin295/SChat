@@ -146,6 +146,11 @@ pub async fn send_text(
     fp: String,
     body: String,
 ) -> Result<Value, String> {
+    let c = state.inner().clone();
+    deliver_text(&c, &fp, &body).await
+}
+
+async fn deliver_text(core: &SharedCore, fp: &str, body: &str) -> Result<Value, String> {
     let body_trimmed = body.trim().to_string();
     if body_trimmed.is_empty() {
         return Err("消息不能为空".into());
@@ -153,13 +158,12 @@ pub async fn send_text(
     if body_trimmed.len() > 64_000 {
         return Err("消息过长".into());
     }
-    let c = state.inner().clone();
-    let fpb = core::fp_bytes(&fp).ok_or("bad fingerprint")?;
+    let fpb = core::fp_bytes(fp).ok_or("bad fingerprint")?;
     let mid = crypto::new_id();
     let ts = crypto::now_ms();
     let row = MsgRow {
         mid: mid.clone(),
-        fp: fp.clone(),
+        fp: fp.to_string(),
         dir: 0,
         kind: "text".into(),
         body: Some(body_trimmed.clone()),
@@ -169,9 +173,9 @@ pub async fn send_text(
         ts,
         state: "pending".into(),
     };
-    c.db.insert_message(&row)?;
+    core.db.insert_message(&row)?;
 
-    let delivered = match core::ensure_session(&c, &fpb).await {
+    let delivered = match core::ensure_session(core, &fpb).await {
         Ok(sess) if sess.is_alive() => {
             let payload = json!({"mid": mid, "kind": "text", "body": body_trimmed, "ts": ts});
             sess.send(crate::transport::F_MSG, serde_json::to_vec(&payload).unwrap_or_default());
@@ -189,15 +193,60 @@ pub async fn send_text(
     };
 
     if delivered {
-        let _ = c.db.update_msg_state(&mid, "sent");
-        let _ = c.db.drop_outbox_mid(&mid);
+        let _ = core.db.update_msg_state(&mid, "sent");
+        let _ = core.db.drop_outbox_mid(&mid);
     } else {
-        let _ = c.db.enqueue_outbox(&mid, &fp);
+        let _ = core.db.enqueue_outbox(&mid, fp);
     }
 
-    let mut view = core::build_msg_view(&c, row);
+    let mut view = core::build_msg_view(core, row);
     view["state"] = json!(if delivered { "sent" } else { "pending" });
     Ok(view)
+}
+
+#[tauri::command]
+pub async fn forward_messages(
+    state: State<'_, SharedCore>,
+    mids: Vec<String>,
+    targets: Vec<String>,
+) -> Result<Value, String> {
+    let c = state.inner().clone();
+    let mut sent = 0usize;
+    let mut failed = 0usize;
+    for mid in &mids {
+        let Some(row) = c.db.msg_by_mid(mid) else {
+            continue;
+        };
+        for t in &targets {
+            if t == &row.fp {
+                continue;
+            }
+            let r = if row.kind == "text" {
+                match deliver_text(&c, t, row.body.as_deref().unwrap_or("")).await {
+                    Ok(view) => {
+                        c.emit("message-new", &view);
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                }
+            } else if let Some(fid) = &row.fid {
+                match c.db.file_info(fid) {
+                    Ok(Some((_name, _sha, _size, _mime, kind, _dir, path))) => {
+                        crate::transfer::send_path(&c, t, &path, Some(&kind)).await.map(|_| ())
+                    }
+                    _ => Err("文件不存在".into()),
+                }
+            } else {
+                Err("不支持的转发类型".into())
+            };
+            if r.is_ok() {
+                sent += 1;
+            } else {
+                failed += 1;
+            }
+        }
+    }
+    Ok(json!({"sent": sent, "failed": failed}))
 }
 
 #[tauri::command]
@@ -415,6 +464,11 @@ pub fn set_settings(app: AppHandle, state: State<'_, SharedCore>, patch: Value) 
 #[tauri::command]
 pub fn clear_history(state: State<'_, SharedCore>, fp: Option<String>) -> Result<(), String> {
     core(&state).db.clear_history(fp.as_deref())
+}
+
+#[tauri::command]
+pub fn delete_messages(state: State<'_, SharedCore>, fp: String, mids: Vec<String>) -> Result<(), String> {
+    core(&state).db.delete_messages(&fp, &mids)
 }
 
 #[tauri::command]

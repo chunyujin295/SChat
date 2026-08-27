@@ -181,6 +181,11 @@ pub fn run() {
             std::fs::create_dir_all(dir.join("files"))?;
             std::fs::create_dir_all(dir.join("outgoing"))?;
 
+            // Let the asset protocol serve files under the data dir so images /
+            // video / audio referenced via convertFileSrc() can preview. The static
+            // scope only covers $APPDATA, so a custom data dir would otherwise 403.
+            let _ = handle.asset_protocol_scope().allow_directory(&dir, true);
+
             let identity = identity::load_or_create(&dir)?;
             let key = identity::load_or_create_db_key(&dir)?;
             let db = store::Db::open(&dir.join("schat.db"), key)?;
@@ -244,6 +249,7 @@ pub fn run() {
             commands::set_blocked,
             commands::forget_peer,
             commands::send_text,
+            commands::forward_messages,
             commands::typing,
             commands::mark_read,
             commands::send_files,
@@ -253,6 +259,7 @@ pub fn run() {
             commands::set_profile,
             commands::set_settings,
             commands::clear_history,
+            commands::delete_messages,
             commands::reveal_path,
             commands::open_path,
             commands::quit_app,

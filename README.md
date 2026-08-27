@@ -21,12 +21,50 @@
 
 ### 环境要求
 
-| 依赖 | 版本 |
-|------|------|
-| Node.js | ≥ 18 |
-| Rust | stable-msvc |
-| VS Build Tools | C++ 生成工具 |
-| WebView2 Runtime | Win10/11 一般自带 |
+| 依赖 | 版本 | 用途 |
+|------|------|------|
+| Node.js | ≥ 18（推荐 LTS） | 前端构建 + Tauri CLI |
+| Rust | stable-msvc | 后端编译 |
+| Visual Studio Build Tools | 2022（C++ 生成工具） | MSVC 链接器 + Windows SDK |
+| WebView2 Runtime | Win10/11 一般自带 | 渲染 WebView |
+
+### Windows 构建环境安装
+
+以下在 Windows 10/11 上从零搭建，按顺序安装即可。
+
+#### 1. Node.js
+
+前往 <https://nodejs.org> 下载 LTS 安装包（`.msi`），一路默认安装。
+
+```bash
+node -v   # 应输出 v18 或更高
+npm -v
+```
+
+#### 2. Rust（MSVC 工具链）
+
+前往 <https://rustup.rs> 下载 `rustup-init.exe` 并运行，默认安装即可（会自动选择 `x86_64-pc-windows-msvc` 目标）。
+
+```bash
+rustc -V
+cargo -V
+```
+
+> 安装器会自动把 `%USERPROFILE%\.cargo\bin` 加入 PATH；本项目的 `dev.bat` / `build.bat` 运行时也会再补上该路径，双保险。
+
+#### 3. Visual Studio Build Tools（C++ 生成工具）
+
+Tauri 后端需要 MSVC 链接器（`link.exe`）和 Windows SDK，Rust 本身不带这些，必须单独安装：
+
+- 前往 <https://visualstudio.microsoft.com/visual-cpp-build-tools/> 下载 **Build Tools for Visual Studio 2022**
+- 启动安装器，勾选工作负载 **「使用 C++ 的桌面开发」**（Desktop development with C++）
+- （也可安装完整版 Visual Studio Community，勾选同样的 C++ 工作负载）
+
+安装完成后 `rustc` 会通过 `vswhere` 自动定位链接器，无需手动配置。
+
+#### 4. WebView2 Runtime
+
+Windows 10/11 通常已预装（Edge 自带）。若运行产物报「找不到 WebView2」，前往 <https://developer.microsoft.com/microsoft-edge/webview2/> 下载 Evergreen 版安装。
 
 ### 安装依赖
 
@@ -62,6 +100,66 @@ scripts\build.bat
 | 裸程序 | `src-tauri\target\release\schat.exe` |
 
 构建成功后会自动打开安装包所在目录。
+
+### NSIS 工具链下载（打包安装包时）
+
+`tauri build` 首次打包 **NSIS 安装包**时，会从 GitHub 自动下载 NSIS 工具链（`nsis-3.11.zip` 与 `nsis_tauri_utils.dll`），缓存到 `%LOCALAPPDATA%\tauri\NSIS`。若下载超时（常见于国内网络），可选下面任一方案：
+
+**方案 A：挂代理（最简单）**
+
+打包器会自动读取系统代理环境变量：
+
+```bash
+set HTTPS_PROXY=http://127.0.0.1:7890
+set HTTP_PROXY=http://127.0.0.1:7890
+npm run tauri build
+```
+
+**方案 B：改用 GitHub 镜像**
+
+打包器支持两个镜像环境变量（二选一）：
+
+```bash
+# 基础镜像：把完整 github 地址拼到镜像站之后转发
+set TAURI_BUNDLER_TOOLS_GITHUB_MIRROR=https://<你的镜像站>
+
+# 模板镜像：用 <owner>/<repo>/<version>/<asset> 占位符拼出下载地址
+set TAURI_BUNDLER_TOOLS_GITHUB_MIRROR_TEMPLATE=https://<你的镜像站>/<owner>/<repo>/releases/download/<version>/<asset>
+```
+
+> 镜像站可用性与地址随时变化，请替换成当前可用的镜像。
+
+**方案 C：手动预置缓存（离线可用）**
+
+按下面步骤把工具链直接放进缓存目录，打包器检测到后就不再联网下载。在 PowerShell 中执行：
+
+```powershell
+$root = "$env:LOCALAPPDATA\tauri"
+New-Item -ItemType Directory -Force -Path $root | Out-Null
+
+# 1) 下载 NSIS 工具链并解压为 NSIS 目录
+curl.exe -L -o "$root\nsis.zip" "https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip"
+Expand-Archive -Path "$root\nsis.zip" -DestinationPath $root -Force
+Rename-Item "$root\nsis-3.11" "$root\NSIS"
+
+# 2) 下载 tauri 的 NSIS 插件
+New-Item -ItemType Directory -Force -Path "$root\NSIS\Plugins\x86-unicode\additional" | Out-Null
+curl.exe -L -o "$root\NSIS\Plugins\x86-unicode\additional\nsis_tauri_utils.dll" "https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.5.3/nsis_tauri_utils.dll"
+
+# 3) 校验（可选，SHA1 与打包器内置值一致）
+Get-FileHash -Algorithm SHA1 "$root\nsis.zip"          # 期望 EF7FF767E5CBD9EDD22ADD3A32C9B8F4500BB10D
+Get-FileHash -Algorithm SHA1 "$root\NSIS\Plugins\x86-unicode\additional\nsis_tauri_utils.dll"  # 期望 75197FEE3C6A814FE035788D1C34EAD39349B860
+```
+
+> 校验通过后 `nsis.zip` 可删除，`NSIS` 目录保留即可；此缓存持久有效，之后打包不再联网。
+
+**方案 D：跳过 NSIS，只出裸程序**
+
+若暂时不需要安装包：
+
+```bash
+npm run tauri build -- --no-bundle
+```
 
 ### 版本管理
 

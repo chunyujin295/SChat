@@ -9,6 +9,7 @@
     "core:window:allow-set-focus",
     "core:window:allow-is-visible",
     "core:window:allow-is-focused",
-    "dialog:default"
+    "dialog:default",
+    "dialog:allow-confirm"
   ]
 }

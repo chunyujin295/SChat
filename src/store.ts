@@ -40,10 +40,15 @@ interface AppState {
   applyTheme: () => void;
   patchConfigLocal: (c: Partial<AppConfig>) => void;
   refreshPeers: () => void;
+  removeMessages: (fp: string, mids: string[]) => void;
 }
 
 let midIndex: Record<string, string> = {};
 let unreadBackup: Record<string, number> = {};
+
+export function registerMid(mid: string, fp: string) {
+  midIndex[mid] = fp;
+}
 
 function convKey(list: Conversation[], fp: string) {
   return list.find((c) => c.fp === fp);
@@ -277,6 +282,24 @@ export const useApp = create<AppState>()((set, get) => ({
   },
 
   refreshPeers() {},
+
+  removeMessages(fp, mids) {
+    const s = get();
+    const doomed = new Set(mids);
+    const list = (s.messages[fp] ?? []).filter((m) => !doomed.has(m.mid));
+    const messages = { ...s.messages, [fp]: list };
+    // Refresh the conversation preview/lastTs from the remaining tail.
+    const convs = s.conversations.map((c) => {
+      if (c.fp !== fp) return c;
+      const last = list[list.length - 1];
+      return {
+        ...c,
+        preview: last ? previewOf(last).slice(0, 60) : "",
+        lastTs: last ? last.ts : 0,
+      };
+    });
+    set({ messages, conversations: convs });
+  },
 }));
 
 export function fmtSize(n: number): string {
@@ -307,6 +330,18 @@ export function fmtDay(ts: number): string {
   const yest = new Date(now.getTime() - 86400000);
   if (d.toDateString() === yest.toDateString()) return "昨天";
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+export function previewOf(m: Message): string {
+  const kindLabel: Record<string, string> = {
+    image: "图片",
+    file: "文件",
+    audio: "语音",
+    video: "视频",
+  };
+  return m.kind === "text"
+    ? m.body ?? ""
+    : `[${kindLabel[m.kind] ?? "文件"}] ${m.fname ?? ""}`;
 }
 
 export function shortFp(fp: string): string {

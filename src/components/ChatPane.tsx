@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { confirm, open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
   Check,
   CheckCheck,
   Clock4,
+  Copy,
   Download,
+  ExternalLink,
   File as FileIcon,
   FolderOpen,
+  Forward,
   ImagePlus,
   Lock,
   Mic,
@@ -24,7 +27,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { api } from "../api";
-import { fmtDay, fmtSize, shortFp, useApp } from "../store";
+import { fmtDay, fmtSize, registerMid, shortFp, useApp } from "../store";
 import type { Message } from "../types";
 import { Avatar, StatusDot } from "./ui";
 
@@ -62,7 +65,14 @@ function Chat({ fp }: { fp: string }) {
   const typingAt = useApp((s) => s.typingUntil[fp]);
   const sessionLive = useApp((s) => s.sessionOnline[fp]);
   const confirmPeer = useApp((s) => s.toast);
+  const toast = useApp((s) => s.toast);
+  const removeMessages = useApp((s) => s.removeMessages);
   const [, force] = useState(0);
+
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; mid: string } | null>(null);
+  const [forwardMids, setForwardMids] = useState<string[] | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => force((n) => n + 1), 1500);
@@ -73,6 +83,38 @@ function Chat({ fp }: { fp: string }) {
   const nick = peer?.nick ?? shortFp(fp);
   const online = peer?.online ?? false;
   const isTyping = typingAt && Date.now() < typingAt;
+
+  const toggleSelect = (mid: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(mid)) next.delete(mid);
+      else next.add(mid);
+      return next;
+    });
+  };
+
+  const exitSelect = () => {
+    setSelecting(false);
+    setSelected(new Set());
+  };
+
+  const openCtxMenu = (e: React.MouseEvent, mid: string) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY, mid });
+  };
+
+  const doDelete = async (mids: string[]) => {
+    try {
+      await api.deleteMessages(fp, mids);
+      removeMessages(fp, mids);
+      toast(`已删除 ${mids.length} 条消息`, "ok");
+    } catch (e) {
+      toast(String(e), "err");
+    }
+    exitSelect();
+  };
+
+  const startForward = (mids: string[]) => setForwardMids(mids);
 
   return (
     <div className="flex-1 h-full flex flex-col min-w-0" style={{ background: "var(--bg)" }}>
@@ -99,20 +141,35 @@ function Chat({ fp }: { fp: string }) {
           </div>
         </div>
         <div className="flex-1" />
-        <div
-          className="hidden md:flex items-center gap-1.5 text-xs px-2.5 h-7 rounded-full cursor-default select-none"
-          style={{ background: "var(--acc-weak)", color: "var(--acc)" }}
-          title={`本机与对方指纹需一致（TOFU 校验）\n${shortFp(fp)}`}
-        >
-          <Lock size={12} />
-          已加密 · {shortFp(fp).slice(-9)}
-        </div>
-        <IconBtn title="语音通话（即将上线）" disabled>
-          <Phone size={18} />
-        </IconBtn>
-        <IconBtn title="视频通话（即将上线）" disabled>
-          <Video size={18} />
-        </IconBtn>
+        {selecting ? (
+          <button
+            className="px-3 h-8 rounded-lg text-sm font-medium"
+            style={{ background: "var(--panel2)", color: "var(--txt)" }}
+            onClick={exitSelect}
+          >
+            取消
+          </button>
+        ) : (
+          <>
+            <div
+              className="hidden md:flex items-center gap-1.5 text-xs px-2.5 h-7 rounded-full cursor-default select-none"
+              style={{ background: "var(--acc-weak)", color: "var(--acc)" }}
+              title={`本机与对方指纹需一致（TOFU 校验）\n${shortFp(fp)}`}
+            >
+              <Lock size={12} />
+              已加密 · {shortFp(fp).slice(-9)}
+            </div>
+            <IconBtn title="多选消息" onClick={() => setSelecting(true)}>
+              <CheckCheck size={18} />
+            </IconBtn>
+            <IconBtn title="语音通话（即将上线）" disabled>
+              <Phone size={18} />
+            </IconBtn>
+            <IconBtn title="视频通话（即将上线）" disabled>
+              <Video size={18} />
+            </IconBtn>
+          </>
+        )}
       </div>
 
       {/* unverified banner */}
@@ -138,9 +195,60 @@ function Chat({ fp }: { fp: string }) {
         </div>
       )}
 
-      <MsgList msgs={msgs} fp={fp} nick={nick} />
+      <MsgList
+        msgs={msgs}
+        fp={fp}
+        nick={nick}
+        selecting={selecting}
+        selected={selected}
+        onToggle={toggleSelect}
+        onContextMenu={openCtxMenu}
+      />
 
-      <InputBar fp={fp} online={online} nick={nick} isTyping={!!isTyping} confirmed={!!peer?.confirmed} />
+      {selecting ? (
+        <SelectBar
+          count={selected.size}
+          onForward={() => startForward([...selected])}
+          onDelete={() => doDelete([...selected])}
+          onCancel={exitSelect}
+        />
+      ) : (
+        <InputBar fp={fp} online={online} nick={nick} isTyping={!!isTyping} confirmed={!!peer?.confirmed} />
+      )}
+
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          m={msgs.find((m) => m.mid === ctxMenu.mid) ?? null}
+          onClose={() => setCtxMenu(null)}
+          onForward={(m) => {
+            setCtxMenu(null);
+            startForward([m.mid]);
+          }}
+          onDelete={(m) => {
+            setCtxMenu(null);
+            void doDelete([m.mid]);
+          }}
+          onMultiSelect={(m) => {
+            setCtxMenu(null);
+            setSelecting(true);
+            setSelected(new Set([m.mid]));
+          }}
+        />
+      )}
+
+      {forwardMids && (
+        <ForwardModal
+          mids={forwardMids}
+          onClose={() => setForwardMids(null)}
+          onDone={(sent, failed) => {
+            setForwardMids(null);
+            exitSelect();
+            toast(`已转发 ${sent} 条${failed ? `，${failed} 条失败` : ""}`, failed ? "err" : "ok");
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -171,7 +279,274 @@ function IconBtn({
   );
 }
 
-function MsgList({ msgs, fp, nick }: { msgs: Message[]; fp: string; nick: string }) {
+function SelectBar({
+  count,
+  onForward,
+  onDelete,
+  onCancel,
+}: {
+  count: number;
+  onForward: () => void;
+  onDelete: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      className="shrink-0 flex items-center gap-3 px-5 h-[64px]"
+      style={{ borderTop: "1px solid var(--line)", background: "var(--panel)" }}
+    >
+      <span className="text-sm" style={{ color: "var(--sub)" }}>
+        已选 <b style={{ color: "var(--acc)" }}>{count}</b> 条
+      </span>
+      <div className="flex-1" />
+      <button
+        disabled={count === 0}
+        className="px-4 h-9 rounded-xl text-sm flex items-center gap-1.5 text-white disabled:opacity-35"
+        style={{ background: "var(--acc)" }}
+        onClick={onForward}
+      >
+        <Forward size={15} /> 转发
+      </button>
+      <button
+        disabled={count === 0}
+        className="px-4 h-9 rounded-xl text-sm flex items-center gap-1.5 disabled:opacity-35"
+        style={{ background: "var(--panel2)", color: "var(--danger)" }}
+        onClick={onDelete}
+      >
+        <Trash2 size={15} /> 删除
+      </button>
+      <button
+        className="px-4 h-9 rounded-xl text-sm"
+        style={{ background: "var(--panel2)", color: "var(--txt)" }}
+        onClick={onCancel}
+      >
+        取消
+      </button>
+    </div>
+  );
+}
+
+function ContextMenu({
+  x,
+  y,
+  m,
+  onClose,
+  onForward,
+  onDelete,
+  onMultiSelect,
+}: {
+  x: number;
+  y: number;
+  m: Message | null;
+  onClose: () => void;
+  onForward: (m: Message) => void;
+  onDelete: (m: Message) => void;
+  onMultiSelect: (m: Message) => void;
+}) {
+  const toast = useApp((s) => s.toast);
+  if (!m) return null;
+
+  // Clamp so the menu stays inside the viewport.
+  const left = Math.min(x, window.innerWidth - 180);
+  const top = Math.min(y, window.innerHeight - 180);
+
+  const copyText = async () => {
+    if (m.body) {
+      try {
+        await navigator.clipboard.writeText(m.body);
+        toast("已复制", "ok");
+      } catch {
+        toast("复制失败", "err");
+      }
+    }
+  };
+
+  return (
+    <>
+      <div className="fixed inset-0 z-[55]" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
+      <div
+        className="fixed z-[56] w-[160px] rounded-xl py-1.5 shadow-2xl"
+        style={{ left, top, background: "var(--panel2)", border: "1px solid var(--line)" }}
+      >
+        {m.kind === "text" && (
+          <Item label="复制" icon={<Copy size={15} />} onClick={() => { copyText(); onClose(); }} />
+        )}
+        <Item label="转发" icon={<Forward size={15} />} onClick={() => onForward(m)} />
+        <Item label="多选" icon={<CheckCheck size={15} />} onClick={() => onMultiSelect(m)} />
+        <div className="my-1" style={{ borderTop: "1px solid var(--line)" }} />
+        <Item label="删除" danger icon={<Trash2 size={15} />} onClick={() => onDelete(m)} />
+      </div>
+    </>
+  );
+}
+
+function Item({
+  label,
+  icon,
+  danger,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className="w-full flex items-center gap-2.5 px-3.5 h-9 text-sm"
+      style={{ color: danger ? "var(--danger)" : "var(--txt)" }}
+      onClick={onClick}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function ForwardModal({
+  mids,
+  onClose,
+  onDone,
+}: {
+  mids: string[];
+  onClose: () => void;
+  onDone: (sent: number, failed: number) => void;
+}) {
+  const peers = useApp((s) => s.peers);
+  const activeFp = useApp((s) => s.activeFp);
+  const [targets, setTargets] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+
+  const candidates = peers.filter((p) => p.fp !== activeFp);
+
+  const toggle = (fp: string) => {
+    setTargets((prev) => {
+      const next = new Set(prev);
+      if (next.has(fp)) next.delete(fp);
+      else next.add(fp);
+      return next;
+    });
+  };
+
+  const confirm = async () => {
+    if (targets.size === 0) return;
+    setBusy(true);
+    try {
+      const r = await api.forwardMessages(mids, [...targets]);
+      onDone(r.sent, r.failed);
+    } catch (e) {
+      useApp.getState().toast(String(e), "err");
+      onDone(0, mids.length);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[65] flex items-center justify-center"
+      style={{ background: "rgba(8,10,14,0.55)", backdropFilter: "blur(3px)" }}
+      onClick={onClose}
+    >
+      <div
+        className="w-[440px] max-w-[92vw] max-h-[80vh] flex flex-col rounded-2xl shadow-2xl"
+        style={{ background: "var(--panel)", border: "1px solid var(--line)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="shrink-0 flex items-center justify-between px-5 h-14"
+          style={{ borderBottom: "1px solid var(--line)" }}
+        >
+          <span className="font-semibold" style={{ color: "var(--txt)" }}>
+            转发给（{targets.size}）
+          </span>
+          <button
+            className="w-8 h-8 rounded-lg flex items-center justify-center"
+            style={{ color: "var(--sub)" }}
+            onClick={onClose}
+          >
+            ✕
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3">
+          {candidates.length === 0 && (
+            <div className="text-center text-sm py-10" style={{ color: "var(--sub)" }}>
+              没有可转发的联系人
+            </div>
+          )}
+          {candidates.map((p) => {
+            const on = targets.has(p.fp);
+            return (
+              <button
+                key={p.fp}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left"
+                style={{ background: on ? "var(--acc-weak)" : "transparent" }}
+                onClick={() => toggle(p.fp)}
+              >
+                <Avatar fp={p.fp} nick={p.nick} ver={p.avaVer} size={38} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium truncate" style={{ color: "var(--txt)" }}>
+                    {p.nick}
+                  </div>
+                  <div className="text-xs truncate" style={{ color: "var(--sub)" }}>
+                    {p.online ? "在线" : "离线"} · {shortFp(p.fp).slice(-9)}
+                  </div>
+                </div>
+                <div
+                  className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+                  style={{
+                    border: on ? "none" : "1.5px solid var(--sub)",
+                    background: on ? "var(--acc)" : "transparent",
+                  }}
+                >
+                  {on && <Check size={13} style={{ color: "#fff" }} />}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <div
+          className="shrink-0 flex gap-2 p-4"
+          style={{ borderTop: "1px solid var(--line)" }}
+        >
+          <button
+            className="flex-1 h-10 rounded-xl text-sm"
+            style={{ background: "var(--panel2)", color: "var(--txt)" }}
+            onClick={onClose}
+          >
+            取消
+          </button>
+          <button
+            disabled={targets.size === 0 || busy}
+            className="flex-1 h-10 rounded-xl text-sm text-white disabled:opacity-40"
+            style={{ background: "var(--acc)" }}
+            onClick={() => void confirm()}
+          >
+            {busy ? "转发中…" : `转发（${targets.size}）`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MsgList({
+  msgs,
+  fp,
+  nick,
+  selecting,
+  selected,
+  onToggle,
+  onContextMenu,
+}: {
+  msgs: Message[];
+  fp: string;
+  nick: string;
+  selecting: boolean;
+  selected: Set<string>;
+  onToggle: (mid: string) => void;
+  onContextMenu: (e: React.MouseEvent, mid: string) => void;
+}) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = boxRef.current;
@@ -184,7 +559,7 @@ function MsgList({ msgs, fp, nick }: { msgs: Message[]; fp: string; nick: string
 
   return (
     <div ref={boxRef} className="flex-1 overflow-y-auto px-6 py-4">
-      <div className="max-w-[820px] mx-auto flex flex-col gap-1.5">
+      <div className="flex flex-col gap-1.5">
         {msgs.map((m) => {
           const day = fmtDay(m.ts);
           const showDay = day !== lastDay;
@@ -193,6 +568,7 @@ function MsgList({ msgs, fp, nick }: { msgs: Message[]; fp: string; nick: string
             !showDay && m.dir === prevDir && m.ts - prevTs < 5 * 60_000;
           prevDir = m.dir;
           prevTs = m.ts;
+          const isSel = selected.has(m.mid);
           return (
             <div key={m.mid}>
               {showDay && (
@@ -205,13 +581,28 @@ function MsgList({ msgs, fp, nick }: { msgs: Message[]; fp: string; nick: string
                   </span>
                 </div>
               )}
-              <div className={`flex ${m.dir === 0 ? "justify-end" : "justify-start"} ${grouped ? "mt-0.5" : "mt-2.5"}`}>
+              <div
+                className={`flex items-center ${m.dir === 0 ? "justify-end" : "justify-start"} ${grouped ? "mt-0.5" : "mt-2.5"}`}
+                onContextMenu={(e) => onContextMenu(e, m.mid)}
+                onClick={() => selecting && onToggle(m.mid)}
+              >
+                {selecting && (
+                  <div
+                    className="w-5 h-5 rounded-full flex items-center justify-center shrink-0 mr-2.5"
+                    style={{
+                      border: isSel ? "none" : "1.5px solid var(--sub)",
+                      background: isSel ? "var(--acc)" : "transparent",
+                    }}
+                  >
+                    {isSel && <Check size={13} style={{ color: "#fff" }} />}
+                  </div>
+                )}
                 {m.dir === 1 && (
                   <div className={`mr-2.5 ${grouped ? "invisible" : ""}`}>
                     <Avatar fp={fp} nick={nick} size={34} />
                   </div>
                 )}
-                <Bubble m={m} grouped={grouped} />
+                <Bubble m={m} grouped={grouped} selecting={selecting} />
               </div>
             </div>
           );
@@ -221,10 +612,10 @@ function MsgList({ msgs, fp, nick }: { msgs: Message[]; fp: string; nick: string
   );
 }
 
-function Bubble({ m, grouped }: { m: Message; grouped: boolean }) {
+function Bubble({ m, grouped, selecting }: { m: Message; grouped: boolean; selecting?: boolean }) {
   const mine = m.dir === 0;
   return (
-    <div className={`flex flex-col ${mine ? "items-end" : "items-start"} max-w-[68%] min-w-0`}>
+    <div className={`flex flex-col ${mine ? "items-end" : "items-start"} max-w-[68%] min-w-0 ${selecting ? "pointer-events-none" : ""}`}>
       <div
         className="msg-select rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed overflow-hidden"
         style={{
@@ -308,6 +699,7 @@ function transferOverlay(m: Message) {
 
 function ImageMsg({ m }: { m: Message }) {
   const setLightbox = useApp((s) => s.setLightbox);
+  const toast = useApp((s) => s.toast);
   if (!m.fpath || m.progress != null) {
     return (
       <div className="relative w-56 h-36 rounded-xl overflow-hidden" style={{ background: "var(--panel2)" }}>
@@ -317,13 +709,32 @@ function ImageMsg({ m }: { m: Message }) {
   }
   const url = convertFileSrc(m.fpath);
   return (
-    <img
-      src={url}
-      className="rounded-xl max-w-64 max-h-64 object-cover cursor-zoom-in"
-      draggable={false}
-      onClick={() => setLightbox(url)}
-      alt=""
-    />
+    <div className="relative group">
+      <img
+        src={url}
+        className="rounded-xl max-w-64 max-h-64 object-cover cursor-zoom-in"
+        draggable={false}
+        onClick={() => setLightbox(url)}
+        alt=""
+      />
+      <button
+        className="absolute bottom-2 right-2 px-2.5 h-7 rounded-lg items-center gap-1.5 text-xs text-white hidden group-hover:flex"
+        style={{ background: "rgba(0,0,0,0.55)" }}
+        title="用系统看图/编辑器打开"
+        onClick={async () => {
+          if (m.fpath) {
+            try {
+              await api.openPath(m.fpath);
+            } catch (e) {
+              toast(String(e), "err");
+            }
+          }
+        }}
+      >
+        <ExternalLink size={13} />
+        打开
+      </button>
+    </div>
   );
 }
 
@@ -459,11 +870,18 @@ function InputBar({ fp, online, nick, isTyping, confirmed }: { fp: string; onlin
     const body = text.trim();
     if (!body) return;
     if (!confirmed) {
-      if (!window.confirm(`对方指纹尚未核对，确定要发送消息给 ${nick} 吗？`)) return;
+      const ok = await confirm(`对方指纹尚未核对，确定要发送消息给 ${nick} 吗？`, {
+        title: "未核对指纹",
+        kind: "warning",
+        okLabel: "继续发送",
+        cancelLabel: "取消",
+      });
+      if (!ok) return;
     }
     setText("");
     try {
       const msg = await api.sendText(fp, body);
+      registerMid(msg.mid, fp);
       const s = useApp.getState();
       const list = s.messages[fp] ?? [];
       if (!list.some((x) => x.mid === msg.mid)) {

@@ -234,6 +234,23 @@ async fn start_outgoing(
     let fid = crypto::new_id();
     let mid = crypto::new_id();
     let final_path = month_dir(core).join(format!("{}_{}", fid, name));
+
+    // The sender must also keep a real file at `fpath` so its own message can
+    // preview images, open files, and be forwarded later (fpath is what the UI
+    // resolves). Move temp blobs into place; copy user-selected paths in.
+    if src != final_path {
+        if temp {
+            std::fs::rename(&src, &final_path)
+                .or_else(|_| {
+                    std::fs::copy(&src, &final_path)?;
+                    std::fs::remove_file(&src)
+                })
+                .map_err(|e| format!("保存文件失败: {e}"))?;
+        } else {
+            std::fs::copy(&src, &final_path).map_err(|e| format!("复制文件失败: {e}"))?;
+        }
+    }
+
     let meta = Meta {
         mid: mid.clone(),
         fid: fid.clone(),
@@ -275,8 +292,8 @@ async fn start_outgoing(
         fid.clone(),
         Xfer::Out {
             meta: meta.clone(),
-            src: Some(src),
-            temp,
+            src: Some(final_path.clone()),
+            temp: false,
             offset: 0,
             acked: 0,
         },

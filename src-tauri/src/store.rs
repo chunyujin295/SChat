@@ -493,6 +493,44 @@ impl Db {
         }
     }
 
+    pub fn delete_messages(&self, fp_hex: &str, mids: &[String]) -> Result<(), String> {
+        // Collect fids before deleting rows so we can clean up files on disk.
+        let fids: Vec<String> = self.with(|c| {
+            let mut out = Vec::new();
+            for mid in mids {
+                let mut st = c.prepare("SELECT fid FROM messages WHERE fp=?1 AND mid=?2")?;
+                let mut rows = st.query(params![fp_hex, mid])?;
+                if let Some(r) = rows.next()? {
+                    if let Some(fid) = r.get::<_, Option<String>>(0)? {
+                        out.push(fid);
+                    }
+                }
+            }
+            Ok(out)
+        })?;
+
+        for mid in mids {
+            self.with(|c| {
+                c.execute("DELETE FROM messages WHERE fp=?1 AND mid=?2", params![fp_hex, mid])?;
+                c.execute("DELETE FROM outbox WHERE fp=?1 AND mid=?2", params![fp_hex, mid])?;
+                Ok(())
+            })?;
+        }
+        for fid in fids {
+            if let Ok(Some((_name, _sha, _size, _mime, _kind, _dir, path))) = self.file_info(&fid)
+            {
+                if !path.is_empty() {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+            self.with(|c| {
+                c.execute("DELETE FROM files WHERE fid=?1", params![fid])?;
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
     pub fn clear_history(&self, fp_hex: Option<&str>) -> Result<(), String> {
         self.with(|c| match fp_hex {
             Some(fp) => {

@@ -34,6 +34,10 @@ export const api = {
   setSettings: (patch: Record<string, unknown>) =>
     invoke<AppConfig>("set_settings", { patch }),
   clearHistory: (fp?: string | null) => invoke<void>("clear_history", { fp: fp ?? null }),
+  deleteMessages: (fp: string, mids: string[]) =>
+    invoke<void>("delete_messages", { fp, mids }),
+  forwardMessages: (mids: string[], targets: string[]) =>
+    invoke<{ sent: number; failed: number }>("forward_messages", { mids, targets }),
   revealPath: (path: string) => invoke<void>("reveal_path", { path }),
   openPath: (path: string) => invoke<void>("open_path", { path }),
   quitApp: () => invoke<void>("quit_app"),
