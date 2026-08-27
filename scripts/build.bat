@@ -11,7 +11,9 @@ where npm   >nul 2>nul || (echo [ERROR] npm not found   & pause & exit /b 1)
 REM --- Read version ---
 if not exist "scripts\version.txt" (echo [ERROR] scripts\version.txt not found & pause & exit /b 1)
 set /p VER=<"scripts\version.txt"
-set VER=%VER:v=%
+REM trim stray whitespace (CR/LF) then strip only a leading 'v'
+for /f "tokens=*" %%A in ("%VER%") do set "VER=%%A"
+if /i "%VER:~0,1%"=="v" set "VER=%VER:~1%"
 echo [SChat] Version: %VER%
 
 REM --- Sync version ---
